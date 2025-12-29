@@ -1608,10 +1608,12 @@ function bindGlobalInputs() {
     scheduleCompute();
     scheduleSave();
   });
-  elements.calculateBtn.addEventListener("click", () => {
-    const simulation = simulate();
-    renderOutputs(simulation);
-  });
+  if (elements.calculateBtn) {
+    elements.calculateBtn.addEventListener("click", () => {
+      const simulation = simulate();
+      renderOutputs(simulation);
+    });
+  }
   elements.exportBtn.addEventListener("click", () => {
     exportSnapshot();
   });

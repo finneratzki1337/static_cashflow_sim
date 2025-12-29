@@ -19,37 +19,38 @@
           <p>Simulate cashflow and account balance over time.</p>
         </div>
       </div>
-      <div class="header-actions">
-        <button id="calculateBtn" class="primary">Calculate</button>
-        <button id="exportBtn">Export</button>
-        <button id="shareBtn">Create link with parameters</button>
-        <button id="jumpToChartBtn">Jump to chart</button>
-        <button id="resetBtn">Reset</button>
+      <div class="header-right">
+        <div class="header-actions">
+          <button id="exportBtn">Export</button>
+          <button id="shareBtn">Create link with parameters</button>
+          <button id="jumpToChartBtn">Jump to chart</button>
+          <button id="resetBtn">Reset</button>
+        </div>
+        <div id="metricsStrip" class="metrics-strip" aria-label="Key metrics">
+          <div class="metric" id="metricEnd" aria-label="End cash">
+            <div class="metric-label">End</div>
+            <div class="metric-main">
+              <div class="metric-value" id="metricEndValue">—</div>
+              <div class="metric-sub" id="metricEndDate">—</div>
+            </div>
+          </div>
+          <div class="metric" id="metricMax" aria-label="Max cash">
+            <div class="metric-label">Max</div>
+            <div class="metric-main">
+              <div class="metric-value" id="metricMaxValue">—</div>
+              <div class="metric-sub" id="metricMaxDate">—</div>
+            </div>
+          </div>
+          <div class="metric" id="metricMin" aria-label="Min cash">
+            <div class="metric-label">Min</div>
+            <div class="metric-main">
+              <div class="metric-value" id="metricMinValue">—</div>
+              <div class="metric-sub" id="metricMinDate">—</div>
+            </div>
+          </div>
+        </div>
       </div>
     </header>
-    <div id="metricsStrip" class="metrics-strip" aria-label="Key metrics">
-      <div class="metric" id="metricEnd" aria-label="End cash">
-        <div class="metric-label">End</div>
-        <div class="metric-main">
-          <div class="metric-value" id="metricEndValue">—</div>
-          <div class="metric-sub" id="metricEndDate">—</div>
-        </div>
-      </div>
-      <div class="metric" id="metricMax" aria-label="Max cash">
-        <div class="metric-label">Max</div>
-        <div class="metric-main">
-          <div class="metric-value" id="metricMaxValue">—</div>
-          <div class="metric-sub" id="metricMaxDate">—</div>
-        </div>
-      </div>
-      <div class="metric" id="metricMin" aria-label="Min cash">
-        <div class="metric-label">Min</div>
-        <div class="metric-main">
-          <div class="metric-value" id="metricMinValue">—</div>
-          <div class="metric-sub" id="metricMinDate">—</div>
-        </div>
-      </div>
-    </div>
   </div>
 
   <main class="app-grid">

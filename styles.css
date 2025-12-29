@@ -61,6 +61,12 @@ body {
   gap: 2px;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .app-header h1 {
   margin: 0;
   font-size: 16px;
@@ -92,20 +98,16 @@ button {
 
 .metrics-strip {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 10px clamp(16px, 4vw, 48px);
-  background: var(--panel);
-  border-top: 1px solid var(--border);
+  gap: 8px;
 }
 
 .metric {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 8px;
+  padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--card);
 }
 
@@ -132,7 +134,7 @@ button {
 }
 
 #outputs {
-  scroll-margin-top: 120px;
+  scroll-margin-top: 96px;
 }
 
 @media (max-width: 720px) {
