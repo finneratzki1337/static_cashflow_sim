@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Static Cashflow Simulator</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>Static Cashflow Simulator</h1>
+      <p>Simulate cashflow and account balance over time.</p>
+    </div>
+    <div class="header-actions">
+      <button id="calculateBtn" class="primary">Calculate</button>
+      <button id="shareBtn">Share link with these Parameters</button>
+      <button id="resetBtn">Reset</button>
+    </div>
+  </header>
+
+  <main class="app-grid">
+    <section class="panel">
+      <h2>Global Inputs</h2>
+      <div class="grid-2">
+        <label>
+          Start Date
+          <input type="date" id="startDate" />
+        </label>
+        <label>
+          Timeframe (years)
+          <input type="number" id="timeframeYears" min="1" max="30" />
+        </label>
+        <label>
+          Start Value
+          <input type="number" id="startValue" step="0.01" />
+        </label>
+        <label>
+          Currency
+          <select id="currency"></select>
+        </label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Cashflow Rules</h2>
+        <div class="hint">Add rules for recurring or one-time cashflows.</div>
+      </div>
+      <div class="table-wrapper">
+        <table class="rule-table">
+          <thead>
+            <tr>
+              <th>Direction</th>
+              <th>Amount</th>
+              <th>Date (D.M.)</th>
+              <th>Year</th>
+              <th>Frequency</th>
+              <th>Effective</th>
+              <th>Note</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="ruleRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Outputs</h2>
+        <div class="resolution-switch" id="resolutionSwitch"></div>
+      </div>
+      <div class="charts">
+        <div class="chart-card">
+          <h3>Cash Balance (End of Period)</h3>
+          <canvas id="balanceChart"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Net Cashflow per Bucket</h3>
+          <canvas id="flowChart"></canvas>
+        </div>
+      </div>
+      <div id="warnings" class="warnings"></div>
+      <div class="table-wrapper">
+        <table class="output-table">
+          <thead>
+            <tr>
+              <th>Period</th>
+              <th>Min Cash</th>
+              <th>Max Cash</th>
+              <th>Avg Cash</th>
+              <th>End Cash</th>
+            </tr>
+          </thead>
+          <tbody id="outputRows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
