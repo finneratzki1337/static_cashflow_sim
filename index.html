@@ -50,6 +50,13 @@
               <div class="metric-sub" id="metricMinDate">—</div>
             </div>
           </div>
+          <div class="metric" id="metricInvestMax" aria-label="Max investment">
+            <div class="metric-label">Max Invest</div>
+            <div class="metric-main">
+              <div class="metric-value" id="metricInvestMaxValue">—</div>
+              <div class="metric-sub" id="metricInvestMaxDate">—</div>
+            </div>
+          </div>
         </div>
       </div>
     </header>
@@ -74,6 +81,18 @@
         <label>
           Currency
           <select id="currency"></select>
+        </label>
+
+        <label>
+          <span>
+            <input type="checkbox" id="investEnabled" />
+            Invest so cash is never less than
+          </span>
+          <input type="number" id="investMinCash" step="0.01" min="0" placeholder="0" />
+        </label>
+        <label>
+          Annual interest (%)
+          <input type="number" id="investAnnualRatePct" step="0.01" placeholder="0" />
         </label>
       </div>
     </section>
@@ -108,6 +127,10 @@
         <div class="resolution-switch" id="resolutionSwitch"></div>
       </div>
       <div class="charts">
+        <div class="chart-card" id="investmentChartCard" hidden>
+          <h3>Investment Potential</h3>
+          <canvas id="investmentChart"></canvas>
+        </div>
         <div class="chart-card">
           <h3>Cash Balance (End of Period)</h3>
           <canvas id="balanceChart"></canvas>

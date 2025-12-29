@@ -17,12 +17,16 @@ const state = {
   startValue: 0,
   currency: "HKD",
   resolution: "Monthly",
+  investEnabled: false,
+  investMinCash: 0,
+  investAnnualRatePct: 0,
   rows: [],
 };
 
 let balanceChart = null;
 let rateChart = null;
 let flowChart = null;
+let investmentChart = null;
 let computeTimer = null;
 let saveTimer = null;
 
@@ -34,6 +38,10 @@ const elements = {
   timeframeYears: document.getElementById("timeframeYears"),
   startValue: document.getElementById("startValue"),
   currency: document.getElementById("currency"),
+  investEnabled: document.getElementById("investEnabled"),
+  investMinCash: document.getElementById("investMinCash"),
+  investAnnualRatePct: document.getElementById("investAnnualRatePct"),
+  investmentChartCard: document.getElementById("investmentChartCard"),
   ruleRows: document.getElementById("ruleRows"),
   outputRows: document.getElementById("outputRows"),
   resolutionSwitch: document.getElementById("resolutionSwitch"),
@@ -53,6 +61,8 @@ const elements = {
   metricMaxDate: document.getElementById("metricMaxDate"),
   metricMinValue: document.getElementById("metricMinValue"),
   metricMinDate: document.getElementById("metricMinDate"),
+  metricInvestMaxValue: document.getElementById("metricInvestMaxValue"),
+  metricInvestMaxDate: document.getElementById("metricInvestMaxDate"),
   transactionRows: document.getElementById("transactionRows"),
   downloadCsvBtn: document.getElementById("downloadCsvBtn"),
 };
@@ -76,6 +86,7 @@ function updateMetricsStrip(simulation) {
     setMetric(elements.metricEndValue, elements.metricEndDate, "—", "—");
     setMetric(elements.metricMaxValue, elements.metricMaxDate, "—", "—");
     setMetric(elements.metricMinValue, elements.metricMinDate, "—", "—");
+    setMetric(elements.metricInvestMaxValue, elements.metricInvestMaxDate, "—", "—");
     return;
   }
 
@@ -84,6 +95,7 @@ function updateMetricsStrip(simulation) {
     setMetric(elements.metricEndValue, elements.metricEndDate, "—", "—");
     setMetric(elements.metricMaxValue, elements.metricMaxDate, "—", "—");
     setMetric(elements.metricMinValue, elements.metricMinDate, "—", "—");
+    setMetric(elements.metricInvestMaxValue, elements.metricInvestMaxDate, "—", "—");
     return;
   }
 
@@ -113,6 +125,23 @@ function updateMetricsStrip(simulation) {
   setMetric(elements.metricEndValue, elements.metricEndDate, formatMoney(endBalance, state.currency), endDate);
   setMetric(elements.metricMaxValue, elements.metricMaxDate, formatMoney(maxBalance, state.currency), maxDate);
   setMetric(elements.metricMinValue, elements.metricMinDate, formatMoney(minBalance, state.currency), minDate);
+
+  const investSeries = simulation.investment?.dailyInvestBalance;
+  if (!Array.isArray(investSeries) || investSeries.length === 0) {
+    setMetric(elements.metricInvestMaxValue, elements.metricInvestMaxDate, "—", "—");
+    return;
+  }
+  let maxInvest = investSeries[0] || 0;
+  let maxInvestIndex = 0;
+  investSeries.forEach((value, index) => {
+    const v = value || 0;
+    if (v > maxInvest) {
+      maxInvest = v;
+      maxInvestIndex = index;
+    }
+  });
+  const maxInvestDate = formatDDMMYYYY(addDays(startDate, maxInvestIndex));
+  setMetric(elements.metricInvestMaxValue, elements.metricInvestMaxDate, formatMoney(maxInvest, state.currency), maxInvestDate);
 }
 
 function collectAllLabels() {
@@ -225,6 +254,16 @@ function normalizeLoadedStateInPlace() {
     state.rows = [];
   }
   (state.rows || []).forEach((row) => normalizeRowInPlace(row));
+
+  if (typeof state.investEnabled !== "boolean") {
+    state.investEnabled = false;
+  }
+  if (!Number.isFinite(state.investMinCash)) {
+    state.investMinCash = 0;
+  }
+  if (!Number.isFinite(state.investAnnualRatePct)) {
+    state.investAnnualRatePct = 0;
+  }
 }
 
 function initializeState() {
@@ -233,6 +272,9 @@ function initializeState() {
   state.startValue = 0;
   state.currency = "HKD";
   state.resolution = "Monthly";
+  state.investEnabled = false;
+  state.investMinCash = 0;
+  state.investAnnualRatePct = 0;
   state.rows = [defaultRow()];
 }
 
@@ -337,6 +379,93 @@ function updateGlobalInputs() {
   elements.timeframeYears.value = state.timeframeYears;
   elements.startValue.value = state.startValue;
   elements.currency.value = state.currency;
+
+  if (elements.investEnabled) {
+    elements.investEnabled.checked = Boolean(state.investEnabled);
+  }
+  if (elements.investMinCash) {
+    elements.investMinCash.value = String(Number(state.investMinCash || 0));
+  }
+  if (elements.investAnnualRatePct) {
+    elements.investAnnualRatePct.value = String(Number(state.investAnnualRatePct || 0));
+  }
+}
+
+function buildSuffixMin(values) {
+  const n = Array.isArray(values) ? values.length : 0;
+  const out = new Array(n);
+  let current = Number.POSITIVE_INFINITY;
+  for (let i = n - 1; i >= 0; i -= 1) {
+    const v = values[i];
+    current = Math.min(current, typeof v === "number" ? v : Number.POSITIVE_INFINITY);
+    out[i] = current;
+  }
+  return out;
+}
+
+function computeMonthEndFlags(startDate, totalDays) {
+  const flags = new Array(totalDays).fill(false);
+  for (let i = 0; i < totalDays; i += 1) {
+    const date = addDays(startDate, i);
+    if (i + 1 >= totalDays) {
+      flags[i] = true;
+      continue;
+    }
+    const next = addDays(startDate, i + 1);
+    const yChanged = next.getUTCFullYear() !== date.getUTCFullYear();
+    const mChanged = next.getUTCMonth() !== date.getUTCMonth();
+    if (yChanged || mChanged) {
+      flags[i] = true;
+    }
+  }
+  return flags;
+}
+
+function bucketizeInvestment(simulation) {
+  const { startDate, dailyNet } = simulation;
+  const investment = simulation.investment;
+  const buckets = new Map();
+  const totalDays = Array.isArray(dailyNet) ? dailyNet.length : 0;
+  const dailyInvestOutflow = investment?.dailyInvestOutflow || [];
+  const dailyInvestBalance = investment?.dailyInvestBalance || [];
+
+  for (let i = 0; i < totalDays; i += 1) {
+    const date = addDays(startDate, i);
+    let key = "";
+    let label = "";
+    if (state.resolution === "Daily") {
+      key = formatISODate(date);
+      label = key;
+    } else if (state.resolution === "Weekly") {
+      const iso = getISOWeek(date);
+      key = `${iso.year}-W${String(iso.week).padStart(2, "0")}`;
+      label = key;
+    } else if (state.resolution === "Monthly") {
+      const year = date.getUTCFullYear();
+      const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+      key = `${year}-${month}`;
+      label = key;
+    } else {
+      const year = date.getUTCFullYear();
+      key = String(year);
+      label = key;
+    }
+
+    if (!buckets.has(key)) {
+      buckets.set(key, { label, investedAmount: 0, investmentValueEnd: 0 });
+    }
+    const bucket = buckets.get(key);
+    const outflow = dailyInvestOutflow[i] || 0;
+    bucket.investedAmount += Math.max(0, -outflow);
+    bucket.investmentValueEnd = dailyInvestBalance[i] || 0;
+  }
+
+  const list = Array.from(buckets.values());
+  return {
+    labels: list.map((b) => b.label),
+    investedAmount: list.map((b) => b.investedAmount),
+    investmentValueEnd: list.map((b) => b.investmentValueEnd),
+  };
 }
 
 function renderCurrencyOptions() {
@@ -1166,7 +1295,71 @@ function simulate() {
     dailyNetByCategory.set(category, daily);
   });
 
-  return { startDate, endDate, dailyNet, dailyBalance, dailyNetByCategory };
+  let investment = null;
+  const investMinCashMinor = toMinor(state.investMinCash, state.currency);
+  const investEnabled = Boolean(state.investEnabled) && investMinCashMinor > 0;
+  if (investEnabled) {
+    const monthEndFlags = computeMonthEndFlags(startDate, totalDays);
+    const suffixMinBalance = buildSuffixMin(dailyBalance);
+
+    const investAtIndex = new Array(totalDays).fill(0);
+    const dailyInvestOutflow = new Array(totalDays).fill(0);
+    let investedSoFar = 0;
+    for (let i = 0; i < totalDays; i += 1) {
+      if (!monthEndFlags[i]) {
+        continue;
+      }
+      const minFutureAdjusted = (suffixMinBalance[i] || 0) - investedSoFar;
+      const adjustedBalanceAtI = (dailyBalance[i] || 0) - investedSoFar;
+      const maxInvestHere = Math.max(0, adjustedBalanceAtI - investMinCashMinor);
+      const desired = Math.max(0, minFutureAdjusted - investMinCashMinor);
+      const investAmount = Math.min(desired, maxInvestHere);
+      if (!investAmount) {
+        continue;
+      }
+      investAtIndex[i] = investAmount;
+      dailyInvestOutflow[i] = -investAmount;
+      investedSoFar += investAmount;
+    }
+
+    for (let i = 0; i < totalDays; i += 1) {
+      dailyNet[i] += dailyInvestOutflow[i];
+    }
+    runningBalance = toMinor(state.startValue, state.currency);
+    for (let i = 0; i < totalDays; i += 1) {
+      runningBalance += dailyNet[i] || 0;
+      dailyBalance[i] = runningBalance;
+    }
+
+    dailyNetByCategory.set("Investment", dailyInvestOutflow);
+
+    let annualRate = Number(state.investAnnualRatePct || 0) / 100;
+    if (!Number.isFinite(annualRate) || annualRate <= -1) {
+      annualRate = 0;
+    }
+    const monthlyFactor = annualRate === 0 ? 1 : (1 + annualRate) ** (1 / 12);
+    let investmentBalance = 0;
+    const dailyInvestBalance = new Array(totalDays).fill(0);
+    for (let i = 0; i < totalDays; i += 1) {
+      if (monthEndFlags[i]) {
+        if (monthlyFactor !== 1) {
+          investmentBalance = Math.round(investmentBalance * monthlyFactor);
+        }
+        investmentBalance += investAtIndex[i] || 0;
+      }
+      dailyInvestBalance[i] = investmentBalance;
+    }
+
+    investment = {
+      enabled: true,
+      minCashMinor: investMinCashMinor,
+      annualRatePct: Number(state.investAnnualRatePct || 0),
+      dailyInvestOutflow,
+      dailyInvestBalance,
+    };
+  }
+
+  return { startDate, endDate, dailyNet, dailyBalance, dailyNetByCategory, investment };
 }
 
 function buildTransactionsFromSimulation(simulation) {
@@ -1366,6 +1559,13 @@ function renderOutputs(simulation) {
       flowChart.destroy();
       flowChart = null;
     }
+    if (investmentChart) {
+      investmentChart.destroy();
+      investmentChart = null;
+    }
+    if (elements.investmentChartCard) {
+      elements.investmentChartCard.hidden = true;
+    }
     return;
   }
   updateMetricsStrip(simulation);
@@ -1379,7 +1579,112 @@ function renderOutputs(simulation) {
   renderWarnings(simulation);
   renderCharts(labels, balanceData, netFlowPerBucketMinor, flowBreakdown, buckets);
   renderTransactions(simulation);
+
+  const investmentEnabled = Boolean(simulation.investment && simulation.investment.enabled);
+  if (elements.investmentChartCard) {
+    elements.investmentChartCard.hidden = !investmentEnabled;
+  }
+  if (!investmentEnabled) {
+    if (investmentChart) {
+      investmentChart.destroy();
+      investmentChart = null;
+    }
+  } else {
+    renderInvestmentChart(simulation);
+  }
+
   updateRuleRowInvalidStyles();
+}
+
+function renderInvestmentChart(simulation) {
+  const investmentCtx = document.getElementById("investmentChart");
+  if (!investmentCtx) {
+    return;
+  }
+  const currency = state.currency;
+  const decimals = CURRENCY_CONFIG[currency].decimals;
+  const breakdown = bucketizeInvestment(simulation);
+
+  const valueDataMajor = breakdown.investmentValueEnd.map((v) => v / 10 ** decimals);
+  const investedDataMajor = breakdown.investedAmount.map((v) => v / 10 ** decimals);
+
+  const tooltip = {
+    callbacks: {
+      label: (context) => {
+        const valueMajor =
+          typeof context.parsed === "number"
+            ? context.parsed
+            : typeof context.parsed?.y === "number"
+              ? context.parsed.y
+              : typeof context.raw === "number"
+                ? context.raw
+                : 0;
+        const minor = Math.round(valueMajor * 10 ** decimals);
+        return `${context.dataset.label}: ${formatMoney(minor, currency)}`;
+      },
+    },
+  };
+
+  if (investmentChart) {
+    investmentChart.data.labels = breakdown.labels;
+    investmentChart.data.datasets[0].data = valueDataMajor;
+    investmentChart.data.datasets[1].data = investedDataMajor;
+    investmentChart.update();
+    return;
+  }
+
+  investmentChart = new Chart(investmentCtx, {
+    type: "bar",
+    data: {
+      labels: breakdown.labels,
+      datasets: [
+        {
+          type: "line",
+          label: "Cumulated invest (incl. interest)",
+          data: valueDataMajor,
+          borderColor: "#4c8dff",
+          backgroundColor: "rgba(76, 141, 255, 0.2)",
+          tension: 0.3,
+          fill: false,
+          yAxisID: "y",
+        },
+        {
+          type: "bar",
+          label: "Invested amount",
+          data: investedDataMajor,
+          backgroundColor: "rgba(76, 141, 255, 0.35)",
+          borderColor: "#4c8dff",
+          borderWidth: 1,
+          yAxisID: "y1",
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true, position: "top" },
+        tooltip,
+      },
+      scales: {
+        y: {
+          position: "left",
+          ticks: {
+            callback: (value) => formatMoney(Math.round(value * 10 ** decimals), currency),
+          },
+        },
+        y1: {
+          position: "right",
+          grid: {
+            drawOnChartArea: false,
+          },
+          ticks: {
+            callback: (value) => formatMoney(Math.round(value * 10 ** decimals), currency),
+          },
+        },
+      },
+    },
+  });
 }
 
 function renderTable(buckets) {
@@ -1545,16 +1850,18 @@ function renderCharts(labels, balanceData, netFlowPerBucketMinor, flowBreakdown,
     if (!same) {
       flowChart.destroy();
       flowChart = null;
-    } else {
-      flowChart.data.labels = flowBreakdown.labels;
-      flowChart.data.datasets.forEach((dataset) => {
-        const category = dataset.label;
-        dataset.data = (flowBreakdown.dataByCategory[category] || []).map(
-          (value) => value / 10 ** CURRENCY_CONFIG[currency].decimals
-        );
-      });
-      flowChart.update();
     }
+  }
+
+  if (flowChart) {
+    flowChart.data.labels = flowBreakdown.labels;
+    flowChart.data.datasets.forEach((dataset) => {
+      const category = dataset.label;
+      dataset.data = (flowBreakdown.dataByCategory[category] || []).map(
+        (value) => value / 10 ** CURRENCY_CONFIG[currency].decimals
+      );
+    });
+    flowChart.update();
   } else {
     const datasets = flowBreakdown.categories.map((category) => {
       const colors = colorForCategory(category);
@@ -1820,6 +2127,54 @@ function bindGlobalInputs() {
     scheduleCompute();
     scheduleSave();
   });
+
+  if (elements.investEnabled) {
+    elements.investEnabled.addEventListener("change", () => {
+      state.investEnabled = Boolean(elements.investEnabled.checked);
+      if (!state.investEnabled) {
+        state.investMinCash = 0;
+        if (elements.investMinCash) {
+          elements.investMinCash.value = "0";
+        }
+      }
+      scheduleCompute();
+      scheduleSave();
+    });
+  }
+
+  const updateInvestMinCash = () => {
+    const value = Number(elements.investMinCash?.value || 0);
+    state.investMinCash = value;
+    if (value > 0) {
+      state.investEnabled = true;
+      if (elements.investEnabled) {
+        elements.investEnabled.checked = true;
+      }
+    } else {
+      state.investEnabled = false;
+      if (elements.investEnabled) {
+        elements.investEnabled.checked = false;
+      }
+    }
+    scheduleCompute();
+    scheduleSave();
+  };
+
+  if (elements.investMinCash) {
+    elements.investMinCash.addEventListener("change", updateInvestMinCash);
+    elements.investMinCash.addEventListener("input", updateInvestMinCash);
+  }
+
+  const updateInvestAnnualRate = () => {
+    state.investAnnualRatePct = Number(elements.investAnnualRatePct?.value || 0);
+    scheduleCompute();
+    scheduleSave();
+  };
+
+  if (elements.investAnnualRatePct) {
+    elements.investAnnualRatePct.addEventListener("change", updateInvestAnnualRate);
+    elements.investAnnualRatePct.addEventListener("input", updateInvestAnnualRate);
+  }
   if (elements.calculateBtn) {
     elements.calculateBtn.addEventListener("click", () => {
       const simulation = simulate();

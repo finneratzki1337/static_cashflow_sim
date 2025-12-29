@@ -98,6 +98,7 @@ button {
 
 .metrics-strip {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -211,6 +212,20 @@ select {
   padding: 8px 10px;
   color: var(--text);
   font-size: 14px;
+}
+
+input[type="checkbox"] {
+  width: auto;
+  padding: 0;
+  border-radius: 6px;
+  accent-color: var(--accent);
+}
+
+label > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
 }
 
 .table-wrapper {
