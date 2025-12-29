@@ -22,6 +22,8 @@
       <div class="header-right">
         <div class="header-actions">
           <button id="exportBtn">Export</button>
+          <button id="importBtn">Import</button>
+          <input id="importFile" type="file" accept="application/json,.json" hidden />
           <button id="shareBtn">Create link with parameters</button>
           <button id="jumpToChartBtn">Jump to chart</button>
           <button id="resetBtn">Reset</button>
@@ -111,7 +113,7 @@
           <canvas id="balanceChart"></canvas>
         </div>
         <div class="chart-card">
-          <h3>Net Cashflow (Avg / Day)</h3>
+          <h3>Net Cashflow (Per Period)</h3>
           <canvas id="rateChart"></canvas>
         </div>
         <div class="chart-card">
@@ -134,6 +136,26 @@
           <tbody id="outputRows"></tbody>
         </table>
       </div>
+
+      <details class="transactions-details" id="transactionsDetails">
+        <summary>Transactions</summary>
+        <div class="transactions-actions">
+          <button id="downloadCsvBtn" type="button">Download CSV</button>
+        </div>
+        <div class="table-wrapper">
+          <table class="output-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>In/Out</th>
+                <th>Amount</th>
+                <th>Resulting Balance</th>
+              </tr>
+            </thead>
+            <tbody id="transactionRows"></tbody>
+          </table>
+        </div>
+      </details>
     </section>
   </main>
 

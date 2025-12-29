@@ -8,7 +8,7 @@ const CURRENCY_CONFIG = {
 
 const FREQUENCIES = ["Monthly", "One time", "Quarterly", "Yearly"];
 const EFFECTIVES = ["Immediate", "Spread 1 month", "Spread quarter", "Spread year"];
-const RESOLUTIONS = ["Daily", "Weekly", "Monthly"];
+const RESOLUTIONS = ["Daily", "Weekly", "Monthly", "Yearly"];
 const STORAGE_KEY = "static_cashflow_state_v1";
 
 const state = {
@@ -40,6 +40,8 @@ const elements = {
   warnings: document.getElementById("warnings"),
   calculateBtn: document.getElementById("calculateBtn"),
   exportBtn: document.getElementById("exportBtn"),
+  importBtn: document.getElementById("importBtn"),
+  importFile: document.getElementById("importFile"),
   shareBtn: document.getElementById("shareBtn"),
   jumpToChartBtn: document.getElementById("jumpToChartBtn"),
   resetBtn: document.getElementById("resetBtn"),
@@ -51,7 +53,11 @@ const elements = {
   metricMaxDate: document.getElementById("metricMaxDate"),
   metricMinValue: document.getElementById("metricMinValue"),
   metricMinDate: document.getElementById("metricMinDate"),
+  transactionRows: document.getElementById("transactionRows"),
+  downloadCsvBtn: document.getElementById("downloadCsvBtn"),
 };
+
+let lastTransactions = [];
 
 function setMetric(valueEl, dateEl, valueText, dateText) {
   if (valueEl) {
@@ -169,9 +175,56 @@ function defaultRow() {
     frequency: "Monthly",
     effective: "Immediate",
     endDate: "",
+    escalationPct: "",
+    escalationEvery: "1",
+    escalationUnit: "month",
     labels: [],
     expanded: false,
   };
+}
+
+function normalizeRowInPlace(row) {
+  if (!row || typeof row !== "object") {
+    return;
+  }
+  if (!Array.isArray(row.labels)) {
+    if (typeof row.note === "string" && row.note.trim()) {
+      row.labels = [row.note.trim()];
+    } else {
+      row.labels = [];
+    }
+  }
+  if (typeof row.endDate !== "string") {
+    row.endDate = "";
+  }
+  if (typeof row.expanded !== "boolean") {
+    row.expanded = false;
+  }
+
+  if (typeof row.escalationPct === "number") {
+    row.escalationPct = String(row.escalationPct);
+  }
+  if (typeof row.escalationPct !== "string") {
+    row.escalationPct = "";
+  }
+
+  if (typeof row.escalationEvery === "number") {
+    row.escalationEvery = String(row.escalationEvery);
+  }
+  if (typeof row.escalationEvery !== "string" || !row.escalationEvery.trim()) {
+    row.escalationEvery = "1";
+  }
+
+  if (row.escalationUnit !== "month" && row.escalationUnit !== "year") {
+    row.escalationUnit = "month";
+  }
+}
+
+function normalizeLoadedStateInPlace() {
+  if (!Array.isArray(state.rows)) {
+    state.rows = [];
+  }
+  (state.rows || []).forEach((row) => normalizeRowInPlace(row));
 }
 
 function initializeState() {
@@ -393,11 +446,37 @@ function buildRuleDetailsRow(row, index) {
           End Date (optional)
           <input type="date" data-field="endDate" />
         </label>
+        <label>
+          Escalation (%)
+          <input type="number" inputmode="decimal" step="0.01" data-field="escalationPct" placeholder="0" />
+        </label>
+        <label>
+          Escalation interval
+          <div class="details-inline">
+            <input type="number" inputmode="numeric" min="1" step="1" data-field="escalationEvery" />
+            <select data-field="escalationUnit">
+              <option value="month">month</option>
+              <option value="year">year</option>
+            </select>
+          </div>
+        </label>
       </div>
     </td>
   `;
   const endDateInput = tr.querySelector('input[data-field="endDate"]');
   endDateInput.value = row.endDate ?? "";
+  const escalationPctInput = tr.querySelector('input[data-field="escalationPct"]');
+  if (escalationPctInput) {
+    escalationPctInput.value = row.escalationPct ?? "";
+  }
+  const escalationEveryInput = tr.querySelector('input[data-field="escalationEvery"]');
+  if (escalationEveryInput) {
+    escalationEveryInput.value = row.escalationEvery ?? "1";
+  }
+  const escalationUnitSelect = tr.querySelector('select[data-field="escalationUnit"]');
+  if (escalationUnitSelect) {
+    escalationUnitSelect.value = row.escalationUnit === "year" ? "year" : "month";
+  }
   return tr;
 }
 
@@ -818,6 +897,19 @@ function formatMoney(minor, currency) {
   }).format(value);
 }
 
+function minorToDecimalString(minor, currency) {
+  const decimals = CURRENCY_CONFIG[currency].decimals;
+  const sign = minor < 0 ? "-" : "";
+  const abs = Math.abs(Math.trunc(minor));
+  const factor = 10 ** decimals;
+  const whole = Math.trunc(abs / factor);
+  const frac = abs % factor;
+  if (decimals === 0) {
+    return `${sign}${whole}`;
+  }
+  return `${sign}${whole}.${String(frac).padStart(decimals, "0")}`;
+}
+
 function compileRules(startDate, endDate) {
   const rules = [];
   state.rows.forEach((row) => {
@@ -870,6 +962,16 @@ function compileRules(startDate, endDate) {
     const labels = normalizeLabels(row.labels);
     const categories = labels.length ? labels : ["Uncategorized"];
 
+    const escalationPct = Number(row.escalationPct || 0);
+    const escalationEvery = Math.max(1, Math.trunc(Number(row.escalationEvery || 1)));
+    const escalationUnit = row.escalationUnit === "year" ? "year" : "month";
+    const escalationEnabled =
+      Number.isFinite(escalationPct) &&
+      escalationPct !== 0 &&
+      escalationPct > -100 &&
+      Number.isFinite(escalationEvery) &&
+      escalationEvery >= 1;
+
     rules.push({
       amountMinor,
       occurrence,
@@ -879,6 +981,13 @@ function compileRules(startDate, endDate) {
       effective: row.effective,
       categories,
       ruleEndExclusive,
+      escalation: escalationEnabled
+        ? {
+            pct: escalationPct,
+            every: escalationEvery,
+            unit: escalationUnit,
+          }
+        : null,
     });
   });
   return rules;
@@ -959,6 +1068,47 @@ function applyOccurrence(diffNet, occDate, effective, amountMinor, startDate, en
   }
 }
 
+function countEscalationSteps(rule, occDate) {
+  const escalation = rule.escalation;
+  if (!escalation) {
+    return 0;
+  }
+  if (occDate.getTime() <= rule.occurrence.getTime()) {
+    return 0;
+  }
+  const every = Math.max(1, Math.trunc(Number(escalation.every || 1)));
+  const unit = escalation.unit === "year" ? "year" : "month";
+  let steps = 0;
+  let next =
+    unit === "year"
+      ? addYearsClamped(rule.occurrence, every, rule.day, rule.month)
+      : addMonthsClamped(rule.occurrence, every, rule.day);
+  while (next.getTime() <= occDate.getTime()) {
+    steps += 1;
+    next = unit === "year" ? addYearsClamped(next, every, rule.day, rule.month) : addMonthsClamped(next, every, rule.day);
+    if (steps > 10000) {
+      break;
+    }
+  }
+  return steps;
+}
+
+function escalatedAmountMinor(rule, occDate) {
+  const escalation = rule.escalation;
+  if (!escalation) {
+    return rule.amountMinor;
+  }
+  const steps = countEscalationSteps(rule, occDate);
+  if (!steps) {
+    return rule.amountMinor;
+  }
+  const factor = 1 + Number(escalation.pct || 0) / 100;
+  if (!Number.isFinite(factor) || factor <= 0) {
+    return rule.amountMinor;
+  }
+  return Math.round(rule.amountMinor * factor ** steps);
+}
+
 function simulate() {
   const startDate = parseStartDate();
   if (!startDate) {
@@ -984,8 +1134,9 @@ function simulate() {
   rules.forEach((rule) => {
     const occurrences = generateOccurrences(rule, startDate, endDate);
     occurrences.forEach((occ) => {
-      applyOccurrence(diffNet, occ, rule.effective, rule.amountMinor, startDate, endDate);
-      const parts = splitAmountMinor(rule.amountMinor, rule.categories.length);
+      const amountMinor = escalatedAmountMinor(rule, occ);
+      applyOccurrence(diffNet, occ, rule.effective, amountMinor, startDate, endDate);
+      const parts = splitAmountMinor(amountMinor, rule.categories.length);
       rule.categories.forEach((category, i) => {
         const categoryDiff = getCategoryDiff(category);
         applyOccurrence(categoryDiff, occ, rule.effective, parts[i], startDate, endDate);
@@ -1018,6 +1169,59 @@ function simulate() {
   return { startDate, endDate, dailyNet, dailyBalance, dailyNetByCategory };
 }
 
+function buildTransactionsFromSimulation(simulation) {
+  if (!simulation) {
+    return [];
+  }
+  const { startDate, dailyNet, dailyBalance } = simulation;
+  const out = [];
+  const totalDays = Array.isArray(dailyNet) ? dailyNet.length : 0;
+  for (let i = 0; i < totalDays; i += 1) {
+    const net = dailyNet[i] || 0;
+    if (!net) {
+      continue;
+    }
+    const date = formatISODate(addDays(startDate, i));
+    out.push({
+      date,
+      inOut: net >= 0 ? "in" : "out",
+      amountMinor: Math.abs(net),
+      balanceMinor: dailyBalance[i] || 0,
+    });
+  }
+  return out;
+}
+
+function renderTransactions(simulation) {
+  if (!elements.transactionRows) {
+    return;
+  }
+  lastTransactions = buildTransactionsFromSimulation(simulation);
+  elements.transactionRows.innerHTML = "";
+  lastTransactions.forEach((tx) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${tx.date}</td>
+      <td>${tx.inOut === "out" ? "Out" : "In"}</td>
+      <td>${formatMoney(tx.amountMinor, state.currency)}</td>
+      <td>${formatMoney(tx.balanceMinor, state.currency)}</td>
+    `;
+    elements.transactionRows.appendChild(tr);
+  });
+}
+
+function exportTransactionsCsv() {
+  const header = ["date", "in/out", "amount", "resulting_balance"].join(",");
+  const lines = [header];
+  lastTransactions.forEach((tx) => {
+    const amount = minorToDecimalString(tx.amountMinor, state.currency);
+    const balance = minorToDecimalString(tx.balanceMinor, state.currency);
+    lines.push([tx.date, tx.inOut, amount, balance].join(","));
+  });
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  downloadTextFile(`cashflow-transactions-${ts}.csv`, lines.join("\n"), "text/csv");
+}
+
 function bucketizeFlowByCategory(simulation) {
   const { startDate, dailyNetByCategory, dailyNet } = simulation;
   const buckets = new Map();
@@ -1047,10 +1251,14 @@ function bucketizeFlowByCategory(simulation) {
       const iso = getISOWeek(date);
       key = `${iso.year}-W${String(iso.week).padStart(2, "0")}`;
       label = key;
-    } else {
+    } else if (state.resolution === "Monthly") {
       const year = date.getUTCFullYear();
       const month = String(date.getUTCMonth() + 1).padStart(2, "0");
       key = `${year}-${month}`;
+      label = key;
+    } else {
+      const year = date.getUTCFullYear();
+      key = String(year);
       label = key;
     }
     const bucket = ensureBucket(key, label, i);
@@ -1084,16 +1292,22 @@ function bucketize(simulation) {
       const iso = getISOWeek(date);
       key = `${iso.year}-W${String(iso.week).padStart(2, "0")}`;
       label = key;
-    } else {
+    } else if (state.resolution === "Monthly") {
       const year = date.getUTCFullYear();
       const month = String(date.getUTCMonth() + 1).padStart(2, "0");
       key = `${year}-${month}`;
+      label = key;
+    } else {
+      const year = date.getUTCFullYear();
+      key = String(year);
       label = key;
     }
     if (!buckets.has(key)) {
       buckets.set(key, {
         label,
         flowSum: 0,
+        cashIn: 0,
+        cashOut: 0,
         minBalance: dailyBalance[i],
         maxBalance: dailyBalance[i],
         totalBalance: 0,
@@ -1102,7 +1316,13 @@ function bucketize(simulation) {
       });
     }
     const bucket = buckets.get(key);
-    bucket.flowSum += dailyNet[i];
+    const net = dailyNet[i] || 0;
+    bucket.flowSum += net;
+    if (net > 0) {
+      bucket.cashIn += net;
+    } else if (net < 0) {
+      bucket.cashOut += -net;
+    }
     bucket.minBalance = Math.min(bucket.minBalance, dailyBalance[i]);
     bucket.maxBalance = Math.max(bucket.maxBalance, dailyBalance[i]);
     bucket.totalBalance += dailyBalance[i];
@@ -1130,6 +1350,10 @@ function renderOutputs(simulation) {
     elements.outputRows.innerHTML = "";
     elements.warnings.innerHTML = "";
     updateMetricsStrip(null);
+    if (elements.transactionRows) {
+      elements.transactionRows.innerHTML = "";
+    }
+    lastTransactions = [];
     if (balanceChart) {
       balanceChart.destroy();
       balanceChart = null;
@@ -1149,14 +1373,12 @@ function renderOutputs(simulation) {
   const labels = buckets.map((b) => b.label);
   const balanceData = buckets.map((b) => b.endBalance);
   const flowBreakdown = bucketizeFlowByCategory(simulation);
-  const avgFlowPerDayMinor = buckets.map((b) => {
-    const days = Math.max(1, b.days || 1);
-    return Math.round(b.flowSum / days);
-  });
+  const netFlowPerBucketMinor = buckets.map((b) => b.flowSum);
 
   renderTable(buckets);
   renderWarnings(simulation);
-  renderCharts(labels, balanceData, avgFlowPerDayMinor, flowBreakdown, buckets);
+  renderCharts(labels, balanceData, netFlowPerBucketMinor, flowBreakdown, buckets);
+  renderTransactions(simulation);
   updateRuleRowInvalidStyles();
 }
 
@@ -1197,7 +1419,7 @@ function renderWarnings(simulation) {
   elements.warnings.appendChild(pill);
 }
 
-function renderCharts(labels, balanceData, avgFlowPerDayMinor, flowBreakdown, buckets) {
+function renderCharts(labels, balanceData, netFlowPerBucketMinor, flowBreakdown, buckets) {
   const balanceCtx = document.getElementById("balanceChart");
   const rateCtx = document.getElementById("rateChart");
   const flowCtx = document.getElementById("flowChart");
@@ -1214,12 +1436,16 @@ function renderCharts(labels, balanceData, avgFlowPerDayMinor, flowBreakdown, bu
         }
         if (context.chart.canvas.id === "balanceChart") {
           return [
-            `End: ${formatMoney(bucket.endBalance, currency)}`,
-            `Min: ${formatMoney(bucket.minBalance, currency)}`,
-            `Max: ${formatMoney(bucket.maxBalance, currency)}`,
-            `Avg: ${formatMoney(bucket.avgBalance, currency)}`,
+            `Total value: ${formatMoney(bucket.endBalance, currency)}`,
+            `Total cash in: ${formatMoney(bucket.cashIn || 0, currency)}`,
+            `Total cash out: ${formatMoney(bucket.cashOut || 0, currency)}`,
           ];
         }
+
+        if (context.chart.canvas.id === "rateChart") {
+          return `Net cashflow: ${formatMoney(bucket.flowSum || 0, currency)}`;
+        }
+
         const valueMajor =
           typeof context.parsed === "number"
             ? context.parsed
@@ -1274,7 +1500,7 @@ function renderCharts(labels, balanceData, avgFlowPerDayMinor, flowBreakdown, bu
 
   if (rateChart) {
     rateChart.data.labels = labels;
-    rateChart.data.datasets[0].data = avgFlowPerDayMinor.map((value) => value / 10 ** decimals);
+    rateChart.data.datasets[0].data = netFlowPerBucketMinor.map((value) => value / 10 ** decimals);
     rateChart.update();
   } else {
     rateChart = new Chart(rateCtx, {
@@ -1283,8 +1509,8 @@ function renderCharts(labels, balanceData, avgFlowPerDayMinor, flowBreakdown, bu
         labels,
         datasets: [
           {
-            label: "Avg / Day",
-            data: avgFlowPerDayMinor.map((value) => value / 10 ** decimals),
+            label: "Net",
+            data: netFlowPerBucketMinor.map((value) => value / 10 ** decimals),
             backgroundColor: "rgba(76, 141, 255, 0.35)",
             borderColor: "#4c8dff",
             borderWidth: 1,
@@ -1495,21 +1721,7 @@ function loadState() {
     const decoded = decodeState(hash.slice(3));
     if (decoded) {
       Object.assign(state, decoded);
-      (state.rows || []).forEach((row) => {
-        if (!Array.isArray(row.labels)) {
-          if (typeof row.note === "string" && row.note.trim()) {
-            row.labels = [row.note.trim()];
-          } else {
-            row.labels = [];
-          }
-        }
-        if (typeof row.endDate !== "string") {
-          row.endDate = "";
-        }
-        if (typeof row.expanded !== "boolean") {
-          row.expanded = false;
-        }
-      });
+      normalizeLoadedStateInPlace();
       ensureEmptyRow();
       renderLabelSuggestions();
       return;
@@ -1520,21 +1732,7 @@ function loadState() {
     try {
       const parsed = JSON.parse(stored);
       Object.assign(state, parsed);
-      (state.rows || []).forEach((row) => {
-        if (!Array.isArray(row.labels)) {
-          if (typeof row.note === "string" && row.note.trim()) {
-            row.labels = [row.note.trim()];
-          } else {
-            row.labels = [];
-          }
-        }
-        if (typeof row.endDate !== "string") {
-          row.endDate = "";
-        }
-        if (typeof row.expanded !== "boolean") {
-          row.expanded = false;
-        }
-      });
+      normalizeLoadedStateInPlace();
       ensureEmptyRow();
       renderLabelSuggestions();
       return;
@@ -1544,6 +1742,20 @@ function loadState() {
   }
   initializeState();
   renderLabelSuggestions();
+}
+
+async function importSnapshotFromFile(file) {
+  const text = await file.text();
+  const parsed = JSON.parse(text);
+  const importedState = parsed && typeof parsed === "object" && parsed.state && typeof parsed.state === "object" ? parsed.state : parsed;
+  initializeState();
+  Object.assign(state, importedState);
+  normalizeLoadedStateInPlace();
+  ensureEmptyRow();
+  renderLabelSuggestions();
+  window.location.hash = "";
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  renderAll();
 }
 
 function downloadTextFile(filename, content, mime) {
@@ -1617,6 +1829,30 @@ function bindGlobalInputs() {
   elements.exportBtn.addEventListener("click", () => {
     exportSnapshot();
   });
+
+  if (elements.importBtn && elements.importFile) {
+    elements.importBtn.addEventListener("click", () => {
+      elements.importFile.click();
+    });
+    elements.importFile.addEventListener("change", async () => {
+      const file = elements.importFile.files && elements.importFile.files[0];
+      elements.importFile.value = "";
+      if (!file) {
+        return;
+      }
+      try {
+        await importSnapshotFromFile(file);
+      } catch (error) {
+        window.alert("Import failed: invalid JSON or unsupported file.");
+      }
+    });
+  }
+
+  if (elements.downloadCsvBtn) {
+    elements.downloadCsvBtn.addEventListener("click", () => {
+      exportTransactionsCsv();
+    });
+  }
   elements.shareBtn.addEventListener("click", async () => {
     const encoded = encodeState();
     window.location.hash = `s=${encoded}`;

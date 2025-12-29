@@ -397,6 +397,21 @@ select {
   gap: 12px;
 }
 
+.rule-details .details-inline {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.rule-details .details-inline input {
+  flex: 0 0 90px;
+}
+
+.rule-details .details-inline select {
+  flex: 1;
+  min-width: 120px;
+}
+
 .note-input {
   min-width: 140px;
 }
@@ -453,4 +468,22 @@ select {
 
 .output-table td.negative {
   color: var(--danger);
+}
+
+.transactions-details {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.transactions-details summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 500;
+  padding: 8px 0;
+}
+
+.transactions-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 10px 0;
 }
