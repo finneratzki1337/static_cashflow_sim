@@ -1,4 +1,4 @@
-name: Deploy static site to GitHub Pages
+name: Deploy GitHub Pages (static)
 
 on:
   push:
@@ -12,20 +12,64 @@ permissions:
 
 concurrency:
   group: "pages"
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Pages
+        uses: actions/checkout@v6
+
+      - name: Configure Pages
         uses: actions/configure-pages@v5
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+
+      # Prepare a clean publish directory so you don't accidentally publish .github/, etc.
+      - name: Prepare publish folder
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir -p _site
+
+          # Copy everything needed for the website, but exclude repo internals.
+          rsync -av \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='node_modules/' \
+            --exclude='_site/' \
+            --exclude='README.md' \
+            --exclude='*.psd' \
+            ./ _site/
+
+          # Disable Jekyll processing (useful if you ever have folders starting with "_")
+          touch _site/.nojekyll
+
+          # Quick sanity check: make sure there's an index.html
+          test -f _site/index.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
         with:
-          path: "."
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Print GitHub Pages URL
+        shell: bash
+        run: |
+          echo "Deployed to: ${{ steps.deployment.outputs.page_url }}"
+          echo "### ✅ GitHub Pages URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.deployment.outputs.page_url }}" >> "$GITHUB_STEP_SUMMARY"

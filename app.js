@@ -35,9 +35,54 @@ const elements = {
   resolutionSwitch: document.getElementById("resolutionSwitch"),
   warnings: document.getElementById("warnings"),
   calculateBtn: document.getElementById("calculateBtn"),
+  exportBtn: document.getElementById("exportBtn"),
   shareBtn: document.getElementById("shareBtn"),
   resetBtn: document.getElementById("resetBtn"),
+  labelSuggestions: document.getElementById("labelSuggestions"),
 };
+
+function collectAllLabels() {
+  const seen = new Map();
+  (state.rows || []).forEach((row) => {
+    const labels = Array.isArray(row.labels) ? row.labels : [];
+    labels.forEach((label) => {
+      const cleaned = normalizeLabel(label);
+      if (!cleaned) {
+        return;
+      }
+      const key = cleaned.toLowerCase();
+      if (!seen.has(key)) {
+        seen.set(key, cleaned);
+      }
+    });
+  });
+  return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+}
+
+function renderLabelSuggestions() {
+  if (!elements.labelSuggestions) {
+    return;
+  }
+  const labels = collectAllLabels();
+  elements.labelSuggestions.innerHTML = "";
+  labels.forEach((label) => {
+    const option = document.createElement("option");
+    option.value = label;
+    elements.labelSuggestions.appendChild(option);
+  });
+}
+
+function updateRuleRowInvalidStyles() {
+  elements.ruleRows.querySelectorAll('tr[data-row-kind="main"][data-row-index]').forEach((tr) => {
+    const index = Number(tr.dataset.rowIndex);
+    const row = state.rows[index];
+    if (row && row.invalid) {
+      tr.classList.add("invalid");
+    } else {
+      tr.classList.remove("invalid");
+    }
+  });
+}
 
 function todayISO() {
   const now = new Date();
@@ -55,7 +100,9 @@ function defaultRow() {
     year: "",
     frequency: "Monthly",
     effective: "Immediate",
-    note: "",
+    endDate: "",
+    labels: [],
+    expanded: false,
   };
 }
 
@@ -153,7 +200,8 @@ function inferYear(startDate, day, month) {
 }
 
 function isRowEmpty(row) {
-  return !row.amount && !row.dateStr && !row.year && !row.note;
+  const labels = Array.isArray(row.labels) ? row.labels : [];
+  return !row.amount && !row.dateStr && !row.year && labels.length === 0;
 }
 
 function ensureEmptyRow() {
@@ -199,92 +247,478 @@ function renderResolutionSwitch() {
   });
 }
 
+function buildRuleRow(row, index) {
+  const tr = document.createElement("tr");
+  tr.dataset.rowIndex = String(index);
+  tr.dataset.rowKind = "main";
+  if (row.invalid) {
+    tr.classList.add("invalid");
+  }
+  tr.innerHTML = `
+    <td>
+      <button type="button" class="dir-toggle" data-action="toggle-direction"></button>
+    </td>
+    <td><input type="number" inputmode="decimal" step="0.01" data-field="amount" /></td>
+    <td><input type="text" placeholder="1.5." data-field="dateStr" /></td>
+    <td><input type="number" inputmode="numeric" data-field="year" /></td>
+    <td>
+      <select data-field="frequency"></select>
+    </td>
+    <td>
+      <select data-field="effective"></select>
+    </td>
+    <td>
+      <div class="label-editor" data-role="label-editor">
+        <input type="text" list="labelSuggestions" data-role="label-input" placeholder="Add label…" />
+      </div>
+    </td>
+    <td>
+      <button class="details-btn" type="button" data-action="toggle-details" aria-label="Toggle details">▾</button>
+      <button class="delete-btn" type="button" data-action="delete" aria-label="Delete rule">✕</button>
+    </td>
+  `;
+
+  const frequencySelect = tr.querySelector('select[data-field="frequency"]');
+  FREQUENCIES.forEach((freq) => {
+    const option = document.createElement("option");
+    option.value = freq;
+    option.textContent = freq;
+    frequencySelect.appendChild(option);
+  });
+  frequencySelect.value = row.frequency;
+
+  const effectiveSelect = tr.querySelector('select[data-field="effective"]');
+  EFFECTIVES.forEach((eff) => {
+    const option = document.createElement("option");
+    option.value = eff;
+    option.textContent = eff;
+    effectiveSelect.appendChild(option);
+  });
+  effectiveSelect.value = row.effective;
+
+  const directionBtn = tr.querySelector('button[data-action="toggle-direction"]');
+  directionBtn.textContent = row.direction === "out" ? "Out" : "In";
+  directionBtn.classList.toggle("in", row.direction !== "out");
+  directionBtn.classList.toggle("out", row.direction === "out");
+
+  const amountInput = tr.querySelector('input[data-field="amount"]');
+  amountInput.value = row.amount ?? "";
+  const dateInput = tr.querySelector('input[data-field="dateStr"]');
+  dateInput.value = row.dateStr ?? "";
+  const yearInput = tr.querySelector('input[data-field="year"]');
+  yearInput.value = row.year ?? "";
+  const editor = tr.querySelector('[data-role="label-editor"]');
+  renderLabelEditor(editor, row);
+
+  return tr;
+}
+
+function buildRuleDetailsRow(row, index) {
+  const tr = document.createElement("tr");
+  tr.dataset.rowIndex = String(index);
+  tr.dataset.rowKind = "details";
+  tr.className = "rule-details" + (row.expanded ? " open" : "");
+  tr.innerHTML = `
+    <td colspan="8">
+      <div class="details-grid">
+        <label>
+          End Date (optional)
+          <input type="date" data-field="endDate" />
+        </label>
+      </div>
+    </td>
+  `;
+  const endDateInput = tr.querySelector('input[data-field="endDate"]');
+  endDateInput.value = row.endDate ?? "";
+  return tr;
+}
+
+function normalizeLabel(label) {
+  return String(label || "").trim();
+}
+
+function renderLabelEditor(editor, row) {
+  if (!editor) {
+    return;
+  }
+  const input = editor.querySelector('[data-role="label-input"]');
+  editor.querySelectorAll('.label-chip').forEach((chip) => chip.remove());
+  const labels = Array.isArray(row.labels) ? row.labels : [];
+  labels.forEach((label) => {
+    const chip = document.createElement('span');
+    chip.className = 'label-chip';
+    chip.dataset.label = label;
+    chip.innerHTML = `<span>${label}</span><button type="button" aria-label="Remove label" data-action="remove-label">✕</button>`;
+    editor.insertBefore(chip, input);
+  });
+}
+
+function addLabelToRow(row, label) {
+  const normalized = normalizeLabel(label);
+  if (!normalized) {
+    return false;
+  }
+  const labels = Array.isArray(row.labels) ? row.labels : [];
+  const lower = normalized.toLowerCase();
+  if (labels.some((l) => String(l).toLowerCase() === lower)) {
+    row.labels = labels;
+    return false;
+  }
+  row.labels = [...labels, normalized];
+  renderLabelSuggestions();
+  return true;
+}
+
+function removeLabelFromRow(row, label) {
+  const labels = Array.isArray(row.labels) ? row.labels : [];
+  const lower = String(label).toLowerCase();
+  row.labels = labels.filter((l) => String(l).toLowerCase() !== lower);
+  renderLabelSuggestions();
+}
+
 function renderRows() {
   elements.ruleRows.innerHTML = "";
   state.rows.forEach((row, index) => {
-    const tr = document.createElement("tr");
-    if (row.invalid) {
-      tr.classList.add("invalid");
+    elements.ruleRows.appendChild(buildRuleRow(row, index));
+    elements.ruleRows.appendChild(buildRuleDetailsRow(row, index));
+  });
+}
+
+function addEmptyRuleRowIfNeeded() {
+  const before = state.rows.length;
+  ensureEmptyRow();
+  if (state.rows.length === before) {
+    return;
+  }
+  const index = state.rows.length - 1;
+  elements.ruleRows.appendChild(buildRuleRow(state.rows[index], index));
+  elements.ruleRows.appendChild(buildRuleDetailsRow(state.rows[index], index));
+
+  // A new row appeared because the previous one became non-empty.
+  // Recompute now so the charts stay in sync with “adding a row”.
+  scheduleCompute();
+  scheduleSave();
+}
+
+function focusAmountRow(index) {
+  const target = elements.ruleRows.querySelector(`tr[data-row-index="${index}"] input[data-field="amount"]`);
+  if (target) {
+    target.focus();
+    target.select?.();
+  }
+}
+
+function bindRuleTableEvents() {
+  elements.ruleRows.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) {
+      return;
     }
-    tr.innerHTML = `
-      <td>
-        <select data-field="direction">
-          <option value="in">Cash In</option>
-          <option value="out">Cash Out</option>
-        </select>
-      </td>
-      <td><input type="number" step="0.01" data-field="amount" value="${row.amount}" /></td>
-      <td><input type="text" placeholder="1.5." data-field="dateStr" value="${row.dateStr}" /></td>
-      <td><input type="number" data-field="year" value="${row.year}" /></td>
-      <td>
-        <select data-field="frequency"></select>
-      </td>
-      <td>
-        <select data-field="effective"></select>
-      </td>
-      <td><input class="note-input" type="text" data-field="note" value="${row.note}" /></td>
-      <td>${index < state.rows.length - 1 ? '<button class="delete-btn" data-action="delete">✕</button>' : ""}</td>
-    `;
+    const field = target.dataset.field;
+    if (!field) {
+      return;
+    }
+    const tr = target.closest("tr[data-row-index]");
+    if (!tr) {
+      return;
+    }
+    const index = Number(tr.dataset.rowIndex);
+    const row = state.rows[index];
+    if (!row) {
+      return;
+    }
 
-    const frequencySelect = tr.querySelector('select[data-field="frequency"]');
-    FREQUENCIES.forEach((freq) => {
-      const option = document.createElement("option");
-      option.value = freq;
-      option.textContent = freq;
-      frequencySelect.appendChild(option);
-    });
-    frequencySelect.value = row.frequency;
+    row[field] = target.value;
+    addEmptyRuleRowIfNeeded();
+  });
 
-    const effectiveSelect = tr.querySelector('select[data-field="effective"]');
-    EFFECTIVES.forEach((eff) => {
-      const option = document.createElement("option");
-      option.value = eff;
-      option.textContent = eff;
-      effectiveSelect.appendChild(option);
-    });
-    effectiveSelect.value = row.effective;
+  elements.ruleRows.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) {
+      return;
+    }
+    const field = target.dataset.field;
+    if (!field) {
+      return;
+    }
+    const tr = target.closest("tr[data-row-index]");
+    if (!tr) {
+      return;
+    }
+    const index = Number(tr.dataset.rowIndex);
+    const row = state.rows[index];
+    if (!row) {
+      return;
+    }
+    row[field] = target.value;
+    addEmptyRuleRowIfNeeded();
+    scheduleCompute();
+    scheduleSave();
+  });
 
-    const directionSelect = tr.querySelector('select[data-field="direction"]');
-    directionSelect.value = row.direction;
+  elements.ruleRows.addEventListener("click", (event) => {
+    const root = event.target instanceof Element ? event.target : null;
+    if (!root) {
+      return;
+    }
 
-    tr.querySelectorAll("input, select").forEach((input) => {
-      input.addEventListener("input", () => {
-        const field = input.dataset.field;
-        if (!field) {
-          return;
-        }
-        row[field] = input.value;
-        if (field === "dateStr") {
-          const parsed = parseDayMonth(row.dateStr);
-          if (parsed) {
-            if (!row.year) {
-              const startDate = parseStartDate();
-              if (startDate) {
-                row.year = String(inferYear(startDate, parsed.day, parsed.month));
-              }
-            }
+    const deleteBtn = root.closest('[data-action="delete"]');
+    if (deleteBtn) {
+      const tr = deleteBtn.closest("tr[data-row-index]");
+      if (!tr) {
+        return;
+      }
+      const index = Number(tr.dataset.rowIndex);
+      state.rows.splice(index, 1);
+      ensureEmptyRow();
+      scheduleCompute();
+      scheduleSave();
+      renderRows();
+      updateRuleRowInvalidStyles();
+      focusAmountRow(Math.min(index, state.rows.length - 1));
+      return;
+    }
+
+    const detailsBtn = root.closest('[data-action="toggle-details"]');
+    if (detailsBtn) {
+      const tr = detailsBtn.closest("tr[data-row-index]");
+      if (!tr) {
+        return;
+      }
+      const index = Number(tr.dataset.rowIndex);
+      const row = state.rows[index];
+      if (!row) {
+        return;
+      }
+      row.expanded = !row.expanded;
+      const detailsTr = elements.ruleRows.querySelector(`tr[data-row-index="${index}"][data-row-kind="details"]`);
+      if (detailsTr) {
+        detailsTr.classList.toggle("open", row.expanded);
+      }
+      return;
+    }
+
+    const removeLabelBtn = root.closest('[data-action="remove-label"]');
+    if (removeLabelBtn) {
+      const hostTr = removeLabelBtn.closest('tr[data-row-index]');
+      if (!hostTr) {
+        return;
+      }
+      const index = Number(hostTr.dataset.rowIndex);
+      const row = state.rows[index];
+      if (!row) {
+        return;
+      }
+      const chip = removeLabelBtn.closest('.label-chip');
+      const label = chip?.dataset.label;
+      if (!label) {
+        return;
+      }
+      removeLabelFromRow(row, label);
+      // Re-render the editor where the click happened, and the main row editor.
+      const editor = hostTr.querySelector('[data-role="label-editor"]');
+      renderLabelEditor(editor, row);
+      const mainEditor = elements.ruleRows.querySelector(`tr[data-row-index="${index}"][data-row-kind="main"] [data-role="label-editor"]`);
+      renderLabelEditor(mainEditor, row);
+      addEmptyRuleRowIfNeeded();
+      scheduleCompute();
+      scheduleSave();
+      return;
+    }
+
+    const dirBtn = root.closest('[data-action="toggle-direction"]');
+    if (dirBtn) {
+      const tr = dirBtn.closest("tr[data-row-index]");
+      if (!tr) {
+        return;
+      }
+      const index = Number(tr.dataset.rowIndex);
+      const row = state.rows[index];
+      if (!row) {
+        return;
+      }
+      row.direction = row.direction === "out" ? "in" : "out";
+      dirBtn.textContent = row.direction === "out" ? "Out" : "In";
+      dirBtn.classList.toggle("in", row.direction !== "out");
+      dirBtn.classList.toggle("out", row.direction === "out");
+      addEmptyRuleRowIfNeeded();
+      scheduleCompute();
+      scheduleSave();
+    }
+  });
+
+  elements.ruleRows.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+
+    // Labels input: Enter or comma adds a chip.
+    if (target.matches('[data-role="label-input"]')) {
+      if (event.key !== "Enter" && event.key !== ",") {
+        return;
+      }
+      event.preventDefault();
+      const hostTr = target.closest('tr[data-row-index]');
+      if (!hostTr) {
+        return;
+      }
+      const index = Number(hostTr.dataset.rowIndex);
+      const row = state.rows[index];
+      if (!row) {
+        return;
+      }
+      const changed = addLabelToRow(row, target.value);
+      target.value = "";
+      if (changed) {
+        const editor = hostTr.querySelector('[data-role="label-editor"]');
+        renderLabelEditor(editor, row);
+        const mainEditor = elements.ruleRows.querySelector(`tr[data-row-index="${index}"][data-row-kind="main"] [data-role="label-editor"]`);
+        renderLabelEditor(mainEditor, row);
+        addEmptyRuleRowIfNeeded();
+        scheduleCompute();
+        scheduleSave();
+      }
+      return;
+    }
+
+    // Amount input: Enter jumps to next row amount.
+    if (event.key !== "Enter") {
+      return;
+    }
+    if (target.dataset.field !== "amount") {
+      return;
+    }
+    const tr = target.closest("tr[data-row-index]");
+    if (!tr) {
+      return;
+    }
+    event.preventDefault();
+    const index = Number(tr.dataset.rowIndex);
+    focusAmountRow(index + 1);
+  });
+
+  // Compute/save only when the user finalizes a field (i.e. leaves it).
+  elements.ruleRows.addEventListener("focusout", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) {
+      return;
+    }
+    const tr = target.closest("tr[data-row-index]");
+    if (!tr) {
+      return;
+    }
+    const index = Number(tr.dataset.rowIndex);
+    const row = state.rows[index];
+    if (!row) {
+      return;
+    }
+
+    if (target instanceof HTMLInputElement && target.matches('[data-role="label-input"]')) {
+      const changed = addLabelToRow(row, target.value);
+      target.value = "";
+      if (changed) {
+        const editor = tr.querySelector('[data-role="label-editor"]');
+        renderLabelEditor(editor, row);
+        const mainEditor = elements.ruleRows.querySelector(`tr[data-row-index="${index}"][data-row-kind="main"] [data-role="label-editor"]`);
+        renderLabelEditor(mainEditor, row);
+      }
+      addEmptyRuleRowIfNeeded();
+      scheduleCompute();
+      scheduleSave();
+      return;
+    }
+
+    const field = target.dataset.field;
+    if (field) {
+      row[field] = target.value;
+    }
+
+    if (target.dataset.field === "dateStr") {
+      const parsed = parseDayMonth(row.dateStr);
+      if (parsed && !row.year) {
+        const startDate = parseStartDate();
+        if (startDate) {
+          row.year = String(inferYear(startDate, parsed.day, parsed.month));
+          const yearInput = tr.querySelector('input[data-field="year"]');
+          if (yearInput) {
+            yearInput.value = row.year;
           }
         }
-        ensureEmptyRow();
-        scheduleCompute();
-        scheduleSave();
-        renderRows();
-      });
-    });
-
-    const deleteBtn = tr.querySelector('[data-action="delete"]');
-    if (deleteBtn) {
-      deleteBtn.addEventListener("click", () => {
-        state.rows.splice(index, 1);
-        ensureEmptyRow();
-        scheduleCompute();
-        scheduleSave();
-        renderRows();
-      });
+      }
     }
 
-    elements.ruleRows.appendChild(tr);
+    addEmptyRuleRowIfNeeded();
+    scheduleCompute();
+    scheduleSave();
   });
+}
+
+function parseISODateUTC(input) {
+  if (!input) {
+    return null;
+  }
+  const parts = String(input).split("-").map(Number);
+  if (parts.length !== 3) {
+    return null;
+  }
+  const [year, month, day] = parts;
+  if (!year || !month || !day) {
+    return null;
+  }
+  return makeUTCDate(year, month, day);
+}
+
+function normalizeLabels(labels) {
+  const arr = Array.isArray(labels) ? labels : [];
+  const out = [];
+  const seen = new Set();
+  arr.forEach((label) => {
+    const cleaned = normalizeLabel(label);
+    if (!cleaned) {
+      return;
+    }
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    out.push(cleaned);
+  });
+  return out;
+}
+
+function splitAmountMinor(amountMinor, parts) {
+  const n = Math.max(1, Number(parts) || 1);
+  if (n === 1) {
+    return [amountMinor];
+  }
+  const base = Math.trunc(amountMinor / n);
+  let remainder = amountMinor - base * n;
+  const out = new Array(n).fill(base);
+  const step = remainder > 0 ? 1 : -1;
+  remainder = Math.abs(remainder);
+  for (let i = 0; i < remainder; i += 1) {
+    out[i] += step;
+  }
+  return out;
+}
+
+function hashHue(input) {
+  const str = String(input);
+  let hash = 0;
+  for (let i = 0; i < str.length; i += 1) {
+    hash = (hash * 31 + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) % 360;
+}
+
+function colorForCategory(category) {
+  const hue = hashHue(category);
+  return {
+    border: `hsl(${hue} 70% 55%)`,
+    background: `hsl(${hue} 70% 55% / 0.45)`,
+  };
 }
 
 function parseStartDate() {
@@ -350,6 +784,24 @@ function compileRules(startDate, endDate) {
     if (occurrence.getTime() >= endDate.getTime()) {
       return;
     }
+
+    let ruleEndExclusive = endDate;
+    if (row.endDate) {
+      const parsedEnd = parseISODateUTC(row.endDate);
+      if (!parsedEnd) {
+        row.invalid = true;
+        return;
+      }
+      // End date is inclusive from the UI; convert to exclusive by adding 1 day.
+      ruleEndExclusive = addDays(parsedEnd, 1);
+      if (ruleEndExclusive.getTime() > endDate.getTime()) {
+        ruleEndExclusive = endDate;
+      }
+    }
+
+    const labels = normalizeLabels(row.labels);
+    const categories = labels.length ? labels : ["Uncategorized"];
+
     rules.push({
       amountMinor,
       occurrence,
@@ -357,7 +809,8 @@ function compileRules(startDate, endDate) {
       month: parsed.month,
       frequency: row.frequency,
       effective: row.effective,
-      note: row.note,
+      categories,
+      ruleEndExclusive,
     });
   });
   return rules;
@@ -373,6 +826,7 @@ function generateOccurrences(rule, startDate, endDate) {
   const anchorDay = rule.day;
   const anchorMonth = rule.month;
   let current = rule.occurrence;
+  const finalEnd = rule.ruleEndExclusive && rule.ruleEndExclusive.getTime() < endDate.getTime() ? rule.ruleEndExclusive : endDate;
   if (freq !== "One time") {
     while (current.getTime() < startDate.getTime()) {
       if (freq === "Monthly") {
@@ -385,7 +839,7 @@ function generateOccurrences(rule, startDate, endDate) {
     }
   }
 
-  while (current.getTime() < endDate.getTime()) {
+  while (current.getTime() < finalEnd.getTime()) {
     if (current.getTime() >= startDate.getTime()) {
       occurrences.push(current);
     }
@@ -449,11 +903,25 @@ function simulate() {
   }
 
   const diffNet = new Array(totalDays + 1).fill(0);
+  const diffNetByCategory = new Map();
+
+  function getCategoryDiff(category) {
+    if (!diffNetByCategory.has(category)) {
+      diffNetByCategory.set(category, new Array(totalDays + 1).fill(0));
+    }
+    return diffNetByCategory.get(category);
+  }
+
   const rules = compileRules(startDate, endDate);
   rules.forEach((rule) => {
     const occurrences = generateOccurrences(rule, startDate, endDate);
     occurrences.forEach((occ) => {
       applyOccurrence(diffNet, occ, rule.effective, rule.amountMinor, startDate, endDate);
+      const parts = splitAmountMinor(rule.amountMinor, rule.categories.length);
+      rule.categories.forEach((category, i) => {
+        const categoryDiff = getCategoryDiff(category);
+        applyOccurrence(categoryDiff, occ, rule.effective, parts[i], startDate, endDate);
+      });
     });
   });
 
@@ -467,7 +935,70 @@ function simulate() {
     runningBalance += runningNet;
     dailyBalance[i] = runningBalance;
   }
-  return { startDate, endDate, dailyNet, dailyBalance };
+
+  const dailyNetByCategory = new Map();
+  diffNetByCategory.forEach((diff, category) => {
+    const daily = new Array(totalDays).fill(0);
+    let run = 0;
+    for (let i = 0; i < totalDays; i += 1) {
+      run += diff[i];
+      daily[i] = run;
+    }
+    dailyNetByCategory.set(category, daily);
+  });
+
+  return { startDate, endDate, dailyNet, dailyBalance, dailyNetByCategory };
+}
+
+function bucketizeFlowByCategory(simulation) {
+  const { startDate, dailyNetByCategory, dailyNet } = simulation;
+  const buckets = new Map();
+  const derived = Array.from(dailyNetByCategory.keys()).sort((a, b) => a.localeCompare(b));
+  const categories = derived.length ? derived : ["Net Flow"];
+
+  function ensureBucket(key, label, dayIndexForInit) {
+    if (!buckets.has(key)) {
+      const flowByCategory = {};
+      categories.forEach((category) => {
+        flowByCategory[category] = 0;
+      });
+      buckets.set(key, { label, flowByCategory, dayIndexForInit });
+    }
+    return buckets.get(key);
+  }
+
+  const totalDays = Array.isArray(dailyNet) ? dailyNet.length : 0;
+  for (let i = 0; i < totalDays; i += 1) {
+    const date = addDays(startDate, i);
+    let key = "";
+    let label = "";
+    if (state.resolution === "Daily") {
+      key = formatISODate(date);
+      label = key;
+    } else if (state.resolution === "Weekly") {
+      const iso = getISOWeek(date);
+      key = `${iso.year}-W${String(iso.week).padStart(2, "0")}`;
+      label = key;
+    } else {
+      const year = date.getUTCFullYear();
+      const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+      key = `${year}-${month}`;
+      label = key;
+    }
+    const bucket = ensureBucket(key, label, i);
+    categories.forEach((category) => {
+      const series = dailyNetByCategory.get(category) || dailyNet;
+      bucket.flowByCategory[category] += series[i] || 0;
+    });
+  }
+
+  const bucketList = Array.from(buckets.values());
+  const labels = bucketList.map((b) => b.label);
+  const dataByCategory = {};
+  categories.forEach((category) => {
+    dataByCategory[category] = bucketList.map((b) => b.flowByCategory[category]);
+  });
+  return { labels, categories, dataByCategory };
 }
 
 function bucketize(simulation) {
@@ -543,11 +1074,12 @@ function renderOutputs(simulation) {
   const buckets = bucketize(simulation);
   const labels = buckets.map((b) => b.label);
   const balanceData = buckets.map((b) => b.endBalance);
-  const flowData = buckets.map((b) => b.flowSum);
+  const flowBreakdown = bucketizeFlowByCategory(simulation);
 
   renderTable(buckets);
   renderWarnings(simulation);
-  renderCharts(labels, balanceData, flowData, buckets);
+  renderCharts(labels, balanceData, flowBreakdown, buckets);
+  updateRuleRowInvalidStyles();
 }
 
 function renderTable(buckets) {
@@ -587,7 +1119,7 @@ function renderWarnings(simulation) {
   elements.warnings.appendChild(pill);
 }
 
-function renderCharts(labels, balanceData, flowData, buckets) {
+function renderCharts(labels, balanceData, flowBreakdown, buckets) {
   const balanceCtx = document.getElementById("balanceChart");
   const flowCtx = document.getElementById("flowChart");
   const currency = state.currency;
@@ -608,7 +1140,8 @@ function renderCharts(labels, balanceData, flowData, buckets) {
             `Avg: ${formatMoney(bucket.avgBalance, currency)}`,
           ];
         }
-        return `Net: ${formatMoney(bucket.flowSum, currency)}`;
+        const raw = context.raw ?? 0;
+        return `${context.dataset.label}: ${formatMoney(Math.round(Number(raw) * 10 ** CURRENCY_CONFIG[currency].decimals), currency)}`;
       },
     },
   };
@@ -635,6 +1168,7 @@ function renderCharts(labels, balanceData, flowData, buckets) {
       },
       options: {
         responsive: true,
+        maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
           tooltip: commonTooltip,
@@ -651,31 +1185,58 @@ function renderCharts(labels, balanceData, flowData, buckets) {
   }
 
   if (flowChart) {
-    flowChart.data.labels = labels;
-    flowChart.data.datasets[0].data = flowData.map((value) => value / 10 ** CURRENCY_CONFIG[currency].decimals);
-    flowChart.update();
+    const desiredCategories = flowBreakdown.categories;
+    const existingCategories = flowChart.data.datasets.map((d) => d.label);
+    const same =
+      existingCategories.length === desiredCategories.length &&
+      existingCategories.every((c, i) => c === desiredCategories[i]);
+
+    if (!same) {
+      flowChart.destroy();
+      flowChart = null;
+    } else {
+      flowChart.data.labels = flowBreakdown.labels;
+      flowChart.data.datasets.forEach((dataset) => {
+        const category = dataset.label;
+        dataset.data = (flowBreakdown.dataByCategory[category] || []).map(
+          (value) => value / 10 ** CURRENCY_CONFIG[currency].decimals
+        );
+      });
+      flowChart.update();
+    }
   } else {
+    const datasets = flowBreakdown.categories.map((category) => {
+      const colors = colorForCategory(category);
+      return {
+        label: category,
+        data: (flowBreakdown.dataByCategory[category] || []).map(
+          (value) => value / 10 ** CURRENCY_CONFIG[currency].decimals
+        ),
+        backgroundColor: colors.background,
+        borderColor: colors.border,
+        borderWidth: 1,
+        stack: "flow",
+      };
+    });
     flowChart = new Chart(flowCtx, {
       type: "bar",
       data: {
-        labels,
-        datasets: [
-          {
-            label: "Net Flow",
-            data: flowData.map((value) => value / 10 ** CURRENCY_CONFIG[currency].decimals),
-            backgroundColor: "rgba(89, 209, 133, 0.5)",
-            borderColor: "#59d185",
-          },
-        ],
+        labels: flowBreakdown.labels,
+        datasets,
       },
       options: {
         responsive: true,
+        maintainAspectRatio: false,
         plugins: {
-          legend: { display: false },
+          legend: { display: true, position: "top" },
           tooltip: commonTooltip,
         },
         scales: {
+          x: {
+            stacked: true,
+          },
           y: {
+            stacked: true,
             ticks: {
               callback: (value) => formatMoney(Math.round(value * 10 ** CURRENCY_CONFIG[currency].decimals), currency),
             },
@@ -729,7 +1290,23 @@ function loadState() {
     const decoded = decodeState(hash.slice(3));
     if (decoded) {
       Object.assign(state, decoded);
+      (state.rows || []).forEach((row) => {
+        if (!Array.isArray(row.labels)) {
+          if (typeof row.note === "string" && row.note.trim()) {
+            row.labels = [row.note.trim()];
+          } else {
+            row.labels = [];
+          }
+        }
+        if (typeof row.endDate !== "string") {
+          row.endDate = "";
+        }
+        if (typeof row.expanded !== "boolean") {
+          row.expanded = false;
+        }
+      });
       ensureEmptyRow();
+      renderLabelSuggestions();
       return;
     }
   }
@@ -738,13 +1315,59 @@ function loadState() {
     try {
       const parsed = JSON.parse(stored);
       Object.assign(state, parsed);
+      (state.rows || []).forEach((row) => {
+        if (!Array.isArray(row.labels)) {
+          if (typeof row.note === "string" && row.note.trim()) {
+            row.labels = [row.note.trim()];
+          } else {
+            row.labels = [];
+          }
+        }
+        if (typeof row.endDate !== "string") {
+          row.endDate = "";
+        }
+        if (typeof row.expanded !== "boolean") {
+          row.expanded = false;
+        }
+      });
       ensureEmptyRow();
+      renderLabelSuggestions();
       return;
     } catch (error) {
       // ignore
     }
   }
   initializeState();
+  renderLabelSuggestions();
+}
+
+function downloadTextFile(filename, content, mime) {
+  const blob = new Blob([content], { type: mime || "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function exportSnapshot() {
+  const simulation = simulate();
+  const buckets = simulation ? bucketize(simulation) : [];
+  const flow = simulation ? bucketizeFlowByCategory(simulation) : { labels: [], categories: [], dataByCategory: {} };
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    state,
+    outputs: {
+      resolution: state.resolution,
+      buckets,
+      flow,
+    },
+  };
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  downloadTextFile(`cashflow-export-${ts}.json`, JSON.stringify(payload, null, 2), "application/json");
 }
 
 function bindGlobalInputs() {
@@ -765,12 +1388,12 @@ function bindGlobalInputs() {
     scheduleCompute();
     scheduleSave();
   });
-  elements.timeframeYears.addEventListener("input", () => {
+  elements.timeframeYears.addEventListener("change", () => {
     state.timeframeYears = Number(elements.timeframeYears.value || 1);
     scheduleCompute();
     scheduleSave();
   });
-  elements.startValue.addEventListener("input", () => {
+  elements.startValue.addEventListener("change", () => {
     state.startValue = Number(elements.startValue.value || 0);
     scheduleCompute();
     scheduleSave();
@@ -783,6 +1406,9 @@ function bindGlobalInputs() {
   elements.calculateBtn.addEventListener("click", () => {
     const simulation = simulate();
     renderOutputs(simulation);
+  });
+  elements.exportBtn.addEventListener("click", () => {
+    exportSnapshot();
   });
   elements.shareBtn.addEventListener("click", async () => {
     const encoded = encodeState();
@@ -811,9 +1437,12 @@ function renderAll() {
   renderResolutionSwitch();
   ensureEmptyRow();
   renderRows();
+  updateRuleRowInvalidStyles();
+  renderLabelSuggestions();
   scheduleCompute();
 }
 
 loadState();
 renderAll();
 bindGlobalInputs();
+bindRuleTableEvents();
