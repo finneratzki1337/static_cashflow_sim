@@ -41,9 +41,73 @@ const elements = {
   calculateBtn: document.getElementById("calculateBtn"),
   exportBtn: document.getElementById("exportBtn"),
   shareBtn: document.getElementById("shareBtn"),
+  jumpToChartBtn: document.getElementById("jumpToChartBtn"),
   resetBtn: document.getElementById("resetBtn"),
   labelSuggestions: document.getElementById("labelSuggestions"),
+  metricsStrip: document.getElementById("metricsStrip"),
+  metricEndValue: document.getElementById("metricEndValue"),
+  metricEndDate: document.getElementById("metricEndDate"),
+  metricMaxValue: document.getElementById("metricMaxValue"),
+  metricMaxDate: document.getElementById("metricMaxDate"),
+  metricMinValue: document.getElementById("metricMinValue"),
+  metricMinDate: document.getElementById("metricMinDate"),
 };
+
+function setMetric(valueEl, dateEl, valueText, dateText) {
+  if (valueEl) {
+    valueEl.textContent = valueText;
+  }
+  if (dateEl) {
+    dateEl.textContent = dateText;
+  }
+}
+
+function updateMetricsStrip(simulation) {
+  if (!elements.metricsStrip) {
+    return;
+  }
+  if (!simulation || !Array.isArray(simulation.dailyBalance) || !simulation.startDate) {
+    setMetric(elements.metricEndValue, elements.metricEndDate, "—", "—");
+    setMetric(elements.metricMaxValue, elements.metricMaxDate, "—", "—");
+    setMetric(elements.metricMinValue, elements.metricMinDate, "—", "—");
+    return;
+  }
+
+  const { dailyBalance, startDate } = simulation;
+  if (dailyBalance.length === 0) {
+    setMetric(elements.metricEndValue, elements.metricEndDate, "—", "—");
+    setMetric(elements.metricMaxValue, elements.metricMaxDate, "—", "—");
+    setMetric(elements.metricMinValue, elements.metricMinDate, "—", "—");
+    return;
+  }
+
+  let minBalance = dailyBalance[0];
+  let minIndex = 0;
+  let maxBalance = dailyBalance[0];
+  let maxIndex = 0;
+
+  dailyBalance.forEach((balance, index) => {
+    if (balance < minBalance) {
+      minBalance = balance;
+      minIndex = index;
+    }
+    if (balance > maxBalance) {
+      maxBalance = balance;
+      maxIndex = index;
+    }
+  });
+
+  const endIndex = dailyBalance.length - 1;
+  const endBalance = dailyBalance[endIndex];
+
+  const endDate = formatDDMMYYYY(addDays(startDate, endIndex));
+  const minDate = formatDDMMYYYY(addDays(startDate, minIndex));
+  const maxDate = formatDDMMYYYY(addDays(startDate, maxIndex));
+
+  setMetric(elements.metricEndValue, elements.metricEndDate, formatMoney(endBalance, state.currency), endDate);
+  setMetric(elements.metricMaxValue, elements.metricMaxDate, formatMoney(maxBalance, state.currency), maxDate);
+  setMetric(elements.metricMinValue, elements.metricMinDate, formatMoney(minBalance, state.currency), minDate);
+}
 
 function collectAllLabels() {
   const seen = new Map();
@@ -1065,6 +1129,7 @@ function renderOutputs(simulation) {
   if (!simulation) {
     elements.outputRows.innerHTML = "";
     elements.warnings.innerHTML = "";
+    updateMetricsStrip(null);
     if (balanceChart) {
       balanceChart.destroy();
       balanceChart = null;
@@ -1079,6 +1144,7 @@ function renderOutputs(simulation) {
     }
     return;
   }
+  updateMetricsStrip(simulation);
   const buckets = bucketize(simulation);
   const labels = buckets.map((b) => b.label);
   const balanceData = buckets.map((b) => b.endBalance);
@@ -1556,12 +1622,21 @@ function bindGlobalInputs() {
       await navigator.clipboard.writeText(window.location.href);
       elements.shareBtn.textContent = "Link copied!";
       setTimeout(() => {
-        elements.shareBtn.textContent = "Share link with these Parameters";
+        elements.shareBtn.textContent = "Create link with parameters";
       }, 1500);
     } catch (error) {
       // ignore clipboard failures
     }
   });
+
+  if (elements.jumpToChartBtn) {
+    elements.jumpToChartBtn.addEventListener("click", () => {
+      const target = document.getElementById("outputs") || document.getElementById("balanceChart");
+      if (target && typeof target.scrollIntoView === "function") {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+  }
   elements.resetBtn.addEventListener("click", () => {
     initializeState();
     window.location.hash = "";
