@@ -21,6 +21,7 @@ const state = {
 };
 
 let balanceChart = null;
+let rateChart = null;
 let flowChart = null;
 let computeTimer = null;
 let saveTimer = null;
@@ -1068,6 +1069,10 @@ function renderOutputs(simulation) {
       balanceChart.destroy();
       balanceChart = null;
     }
+    if (rateChart) {
+      rateChart.destroy();
+      rateChart = null;
+    }
     if (flowChart) {
       flowChart.destroy();
       flowChart = null;
@@ -1078,10 +1083,14 @@ function renderOutputs(simulation) {
   const labels = buckets.map((b) => b.label);
   const balanceData = buckets.map((b) => b.endBalance);
   const flowBreakdown = bucketizeFlowByCategory(simulation);
+  const avgFlowPerDayMinor = buckets.map((b) => {
+    const days = Math.max(1, b.days || 1);
+    return Math.round(b.flowSum / days);
+  });
 
   renderTable(buckets);
   renderWarnings(simulation);
-  renderCharts(labels, balanceData, flowBreakdown, buckets);
+  renderCharts(labels, balanceData, avgFlowPerDayMinor, flowBreakdown, buckets);
   updateRuleRowInvalidStyles();
 }
 
@@ -1122,8 +1131,9 @@ function renderWarnings(simulation) {
   elements.warnings.appendChild(pill);
 }
 
-function renderCharts(labels, balanceData, flowBreakdown, buckets) {
+function renderCharts(labels, balanceData, avgFlowPerDayMinor, flowBreakdown, buckets) {
   const balanceCtx = document.getElementById("balanceChart");
+  const rateCtx = document.getElementById("rateChart");
   const flowCtx = document.getElementById("flowChart");
   const currency = state.currency;
   const decimals = CURRENCY_CONFIG[currency].decimals;
@@ -1189,6 +1199,43 @@ function renderCharts(labels, balanceData, flowBreakdown, buckets) {
           y: {
             ticks: {
               callback: (value) => formatMoney(Math.round(value * 10 ** CURRENCY_CONFIG[currency].decimals), currency),
+            },
+          },
+        },
+      },
+    });
+  }
+
+  if (rateChart) {
+    rateChart.data.labels = labels;
+    rateChart.data.datasets[0].data = avgFlowPerDayMinor.map((value) => value / 10 ** decimals);
+    rateChart.update();
+  } else {
+    rateChart = new Chart(rateCtx, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Avg / Day",
+            data: avgFlowPerDayMinor.map((value) => value / 10 ** decimals),
+            backgroundColor: "rgba(76, 141, 255, 0.35)",
+            borderColor: "#4c8dff",
+            borderWidth: 1,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: commonTooltip,
+        },
+        scales: {
+          y: {
+            ticks: {
+              callback: (value) => formatMoney(Math.round(value * 10 ** decimals), currency),
             },
           },
         },
