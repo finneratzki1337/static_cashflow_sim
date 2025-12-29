@@ -153,6 +153,15 @@ select {
   font-weight: 500;
 }
 
+.rule-table th[data-sort] {
+  cursor: pointer;
+  user-select: none;
+}
+
+.rule-table th[data-sort]:hover {
+  color: var(--text);
+}
+
 .rule-table input,
 .rule-table select {
   width: 100%;

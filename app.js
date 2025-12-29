@@ -25,6 +25,9 @@ let flowChart = null;
 let computeTimer = null;
 let saveTimer = null;
 
+let ruleSortKey = null;
+let ruleSortAsc = true;
+
 const elements = {
   startDate: document.getElementById("startDate"),
   timeframeYears: document.getElementById("timeframeYears"),
@@ -1123,6 +1126,7 @@ function renderCharts(labels, balanceData, flowBreakdown, buckets) {
   const balanceCtx = document.getElementById("balanceChart");
   const flowCtx = document.getElementById("flowChart");
   const currency = state.currency;
+  const decimals = CURRENCY_CONFIG[currency].decimals;
 
   const commonTooltip = {
     callbacks: {
@@ -1140,8 +1144,16 @@ function renderCharts(labels, balanceData, flowBreakdown, buckets) {
             `Avg: ${formatMoney(bucket.avgBalance, currency)}`,
           ];
         }
-        const raw = context.raw ?? 0;
-        return `${context.dataset.label}: ${formatMoney(Math.round(Number(raw) * 10 ** CURRENCY_CONFIG[currency].decimals), currency)}`;
+        const valueMajor =
+          typeof context.parsed === "number"
+            ? context.parsed
+            : typeof context.parsed?.y === "number"
+              ? context.parsed.y
+              : typeof context.raw === "number"
+                ? context.raw
+                : 0;
+        const minor = Math.round(valueMajor * 10 ** decimals);
+        return `${context.dataset.label}: ${formatMoney(minor, currency)}`;
       },
     },
   };
@@ -1245,6 +1257,86 @@ function renderCharts(labels, balanceData, flowBreakdown, buckets) {
       },
     });
   }
+}
+
+function valueForSort(row, key) {
+  if (key === "amount") {
+    const v = Number(row.amount || 0);
+    return Number.isFinite(v) ? v : 0;
+  }
+  if (key === "year") {
+    const v = Number(row.year || 0);
+    return Number.isFinite(v) ? v : 0;
+  }
+  if (key === "direction") {
+    return row.direction === "out" ? 1 : 0;
+  }
+  if (key === "frequency") {
+    return String(row.frequency || "");
+  }
+  if (key === "effective") {
+    return String(row.effective || "");
+  }
+  if (key === "labels") {
+    const labels = Array.isArray(row.labels) ? row.labels : [];
+    return labels.join(", ").toLowerCase();
+  }
+  if (key === "date") {
+    const parsed = parseDayMonth(row.dateStr);
+    const yearValue = Number(row.year || "");
+    if (!parsed || !yearValue) {
+      return Number.POSITIVE_INFINITY;
+    }
+    const date = makeUTCDate(yearValue, parsed.month, parsed.day);
+    return date.getTime();
+  }
+  return "";
+}
+
+function sortRulesBy(key) {
+  if (ruleSortKey === key) {
+    ruleSortAsc = !ruleSortAsc;
+  } else {
+    ruleSortKey = key;
+    ruleSortAsc = true;
+  }
+
+  const entries = (state.rows || []).filter((row) => !isRowEmpty(row));
+  entries.sort((a, b) => {
+    const av = valueForSort(a, key);
+    const bv = valueForSort(b, key);
+    if (typeof av === "number" && typeof bv === "number") {
+      return ruleSortAsc ? av - bv : bv - av;
+    }
+    const as = String(av);
+    const bs = String(bv);
+    return ruleSortAsc ? as.localeCompare(bs) : bs.localeCompare(as);
+  });
+
+  state.rows = entries;
+  ensureEmptyRow();
+  renderRows();
+  updateRuleRowInvalidStyles();
+  renderLabelSuggestions();
+  scheduleSave();
+}
+
+function bindRuleTableSorting() {
+  const thead = elements.ruleRows?.closest("table")?.querySelector("thead");
+  if (!thead) {
+    return;
+  }
+  thead.addEventListener("click", (event) => {
+    const th = event.target instanceof Element ? event.target.closest("th[data-sort]") : null;
+    if (!th) {
+      return;
+    }
+    const key = th.dataset.sort;
+    if (!key) {
+      return;
+    }
+    sortRulesBy(key);
+  });
 }
 
 function scheduleCompute() {
@@ -1446,3 +1538,4 @@ loadState();
 renderAll();
 bindGlobalInputs();
 bindRuleTableEvents();
+bindRuleTableSorting();
