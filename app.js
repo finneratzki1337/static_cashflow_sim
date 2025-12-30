@@ -1731,6 +1731,24 @@ function renderCharts(labels, balanceData, netFlowPerBucketMinor, flowBreakdown,
   const currency = state.currency;
   const decimals = CURRENCY_CONFIG[currency].decimals;
 
+  const majorToMinor = (valueMajor) => {
+    const major = typeof valueMajor === "number" && Number.isFinite(valueMajor) ? valueMajor : 0;
+    return Math.round(major * 10 ** decimals);
+  };
+
+  const contextValueMajor = (context) => {
+    if (typeof context.parsed === "number") {
+      return context.parsed;
+    }
+    if (typeof context.parsed?.y === "number") {
+      return context.parsed.y;
+    }
+    if (typeof context.raw === "number") {
+      return context.raw;
+    }
+    return 0;
+  };
+
   const commonTooltip = {
     callbacks: {
       label: (context) => {
@@ -1740,26 +1758,20 @@ function renderCharts(labels, balanceData, netFlowPerBucketMinor, flowBreakdown,
           return "";
         }
         if (context.chart.canvas.id === "balanceChart") {
+          const endBalanceMinor = majorToMinor(contextValueMajor(context));
           return [
-            `Total value: ${formatMoney(bucket.endBalance, currency)}`,
+            `Total value: ${formatMoney(endBalanceMinor, currency)}`,
             `Total cash in: ${formatMoney(bucket.cashIn || 0, currency)}`,
             `Total cash out: ${formatMoney(bucket.cashOut || 0, currency)}`,
           ];
         }
 
         if (context.chart.canvas.id === "rateChart") {
-          return `Net cashflow: ${formatMoney(bucket.flowSum || 0, currency)}`;
+          const netMinor = majorToMinor(contextValueMajor(context));
+          return `Net cashflow: ${formatMoney(netMinor, currency)}`;
         }
 
-        const valueMajor =
-          typeof context.parsed === "number"
-            ? context.parsed
-            : typeof context.parsed?.y === "number"
-              ? context.parsed.y
-              : typeof context.raw === "number"
-                ? context.raw
-                : 0;
-        const minor = Math.round(valueMajor * 10 ** decimals);
+        const minor = majorToMinor(contextValueMajor(context));
         return `${context.dataset.label}: ${formatMoney(minor, currency)}`;
       },
     },
